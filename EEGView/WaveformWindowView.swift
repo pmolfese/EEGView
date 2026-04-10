@@ -13,6 +13,10 @@ struct WaveformWindowView: View {
 
     @State private var amplitudeScale: Double = 100
     @State private var timeScale: Double = 1
+    @State private var showsFilterPopover = false
+    @State private var filterLowCutoff = 0.1
+    @State private var filterHighCutoff = 30.0
+    @State private var notch60HzEnabled = false
     @State private var horizontalOffset: CGFloat = 0
     @State private var horizontalViewportWidth: CGFloat = 1
     @State private var horizontalScrollPosition = ScrollPosition(idType: Int.self, x: 0)
@@ -24,6 +28,15 @@ struct WaveformWindowView: View {
     @State private var showsEventsPanel = false
     @State private var selectedEventID: MFFEvent.ID?
     @State private var selectedEventCodes = Set<String>()
+    @State private var showsECGDetectorPopover = false
+    @State private var selectedECGMethods: Set<ECGDetectionMethod> = [.ica]
+    @State private var icaPCAComponentCount = 10
+    @State private var detectedECGEvents: [MFFEvent] = []
+    @State private var isDetectingECG = false
+    @State private var ecgDetectionStatusMessage: String?
+    @State private var icaReview: ECGICAReview?
+    @State private var selectedICAComponentIndex: Int?
+    @State private var pendingDetectedECGEvents: [MFFEvent] = []
 
     private let sampleStride = 5
     private let channelRowHeight: CGFloat = 70
@@ -66,7 +79,7 @@ struct WaveformWindowView: View {
                             HStack(alignment: .top, spacing: 12) {
                                 LazyVStack(alignment: .leading, spacing: rowSpacing) {
                                     ForEach(Array(signal.data.enumerated()), id: \.offset) { index, _ in
-                                        channelLabelRow(index: index)
+                                        channelLabelRow(index: index, for: signal)
                                     }
                                 }
                                 .frame(width: labelColumnWidth, alignment: .topLeading)
@@ -74,31 +87,14 @@ struct WaveformWindowView: View {
                                 ScrollView(.horizontal, showsIndicators: true) {
                                     LazyVStack(alignment: .leading, spacing: rowSpacing) {
                                         ForEach(Array(signal.data.enumerated()), id: \.offset) { index, channel in
-                                        WaveformPlot(
-                                            samples: channel,
-                                            amplitudeScale: amplitudeScale,
-                                            timeScale: timeScale,
-                                            sampleStride: sampleStride,
-                                            visibleRange: visibleHorizontalRange,
-                                            nominalHeight: channelRowHeight
-                                        )
-                                        .frame(width: plotWidth, height: channelRowHeight + (channelOverflowHeight * 2))
-                                        .offset(y: 0)
-                                        .background {
-                                            RoundedRectangle(cornerRadius: 8)
-                                                .fill(Color(nsColor: .controlBackgroundColor))
-                                                .frame(width: plotWidth, height: channelRowHeight)
+                                            waveformRow(
+                                                index: index,
+                                                channel: channel,
+                                                plotWidth: plotWidth,
+                                                signal: signal
+                                            )
                                         }
-                                        .overlay {
-                                            RoundedRectangle(cornerRadius: 8)
-                                                .stroke(Color.secondary.opacity(0.15), lineWidth: 1)
-                                                .frame(width: plotWidth, height: channelRowHeight)
-                                        }
-                                        .frame(width: plotWidth, height: channelRowHeight)
-                                        .accessibilityLabel("Channel \(index + 1)")
-                                        .zIndex(1)
                                     }
-                                }
                                     .padding(.trailing, 20)
                                 }
                                 .scrollPosition($horizontalScrollPosition)
@@ -170,6 +166,12 @@ struct WaveformWindowView: View {
             filterStatusMessage = nil
             selectedEventID = nil
             selectedEventCodes = []
+            detectedECGEvents = []
+            isDetectingECG = false
+            ecgDetectionStatusMessage = nil
+            icaReview = nil
+            selectedICAComponentIndex = nil
+            pendingDetectedECGEvents = []
         }
     }
 
@@ -204,13 +206,15 @@ struct WaveformWindowView: View {
                 .foregroundStyle(.secondary)
 
             if let signal = waveformSession.signal {
-                Button(filteredSignal == nil ? "Filter to 0.1-30Hz" : "Show Unfiltered") {
+                Button(filteredSignal == nil ? "Filter" : "Show Unfiltered") {
                     if filteredSignal == nil {
-                        applyBandpassFilter(to: signal)
+                        showsFilterPopover.toggle()
                     } else {
-                        filteredSignal = nil
-                        filterStatusMessage = nil
+                        clearBandpassFilter()
                     }
+                }
+                .popover(isPresented: $showsFilterPopover, arrowEdge: .bottom) {
+                    filterPopover(for: signal)
                 }
                 .disabled(isFiltering)
 
@@ -221,19 +225,61 @@ struct WaveformWindowView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else if filteredSignal != nil {
-                    Text("Band-pass active")
+                    Text("Butterworth \(filterLowCutoff, specifier: "%.1f")-\(filterHighCutoff, specifier: "%.1f") Hz\(notch60HzEnabled ? " + 60 Hz notch" : "")")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
+
+                Button(detectedECGEvents.isEmpty ? "Detect ECG" : "Redetect ECG") {
+                    showsECGDetectorPopover.toggle()
+                }
+                .popover(isPresented: $showsECGDetectorPopover, arrowEdge: .bottom) {
+                    ecgDetectionPopover(for: signal)
+                }
+                .disabled(isDetectingECG || icaReview != nil)
+
+                if isDetectingECG {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Detecting ECG…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if !detectedECGEvents.isEmpty {
+                    Text("\(detectedECGEvents.count) ECG markers")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let icaReview {
+                    Text("ICA review: \(icaReview.components.count) components")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Button("Confirm ICA Component") {
+                        confirmICASelection()
+                    }
+                    .disabled(selectedICAComponentIndex == nil)
+
+                    Button("Cancel ICA Review") {
+                        cancelICAReview()
+                    }
                 }
 
                 Button(showsEventsPanel ? "Hide Events" : "Show Events") {
                     showsEventsPanel.toggle()
                 }
-                .disabled(signal.events.isEmpty)
+                .disabled(displayedSignal?.events.isEmpty ?? true)
             }
 
             if let filterStatusMessage {
                 Text(filterStatusMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .lineLimit(2)
+            }
+
+            if let ecgDetectionStatusMessage {
+                Text(ecgDetectionStatusMessage)
                     .font(.caption)
                     .foregroundStyle(.red)
                     .lineLimit(2)
@@ -247,7 +293,30 @@ struct WaveformWindowView: View {
     }
 
     private var displayedSignal: MFFSignalData? {
-        filteredSignal ?? waveformSession.signal
+        if let icaReview {
+            return icaReview.signal
+        }
+
+        let baseSignal = filteredSignal ?? waveformSession.signal
+        guard let baseSignal else {
+            return nil
+        }
+
+        guard !detectedECGEvents.isEmpty else {
+            return baseSignal
+        }
+
+        return MFFSignalData(
+            signalURL: baseSignal.signalURL,
+            signalType: baseSignal.signalType,
+            numberOfChannels: baseSignal.numberOfChannels,
+            samplingRate: baseSignal.samplingRate,
+            duration: baseSignal.duration,
+            recordingStartTime: baseSignal.recordingStartTime,
+            events: (baseSignal.events + detectedECGEvents)
+                .sorted { $0.beginTimeSeconds < $1.beginTimeSeconds },
+            data: baseSignal.data
+        )
     }
 
     private func eventLabelRow(for signal: MFFSignalData) -> some View {
@@ -267,8 +336,115 @@ struct WaveformWindowView: View {
         }
     }
 
-    private func channelLabelRow(index: Int) -> some View {
-        Text("Ch \(index + 1)")
+    private func ecgDetectionPopover(for signal: MFFSignalData) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("ECG Detection")
+                .font(.headline)
+
+            ForEach(ECGDetectionMethod.allCases) { method in
+                Toggle(isOn: Binding(
+                    get: { selectedECGMethods.contains(method) },
+                    set: { isSelected in
+                        if isSelected {
+                            selectedECGMethods.insert(method)
+                        } else {
+                            selectedECGMethods.remove(method)
+                        }
+                    }
+                )) {
+                    Text(method.title)
+                }
+                .toggleStyle(.checkbox)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("ICA PCA Components")
+                    .font(.caption.weight(.semibold))
+                Stepper(value: $icaPCAComponentCount, in: 2...32) {
+                    Text("\(icaPCAComponentCount) components")
+                        .foregroundStyle(selectedECGMethods.contains(.ica) ? .primary : .secondary)
+                }
+                .disabled(!selectedECGMethods.contains(.ica))
+            }
+
+            HStack {
+                Button("Clear ECG") {
+                    detectedECGEvents = []
+                    pendingDetectedECGEvents = []
+                    icaReview = nil
+                    selectedICAComponentIndex = nil
+                    ecgDetectionStatusMessage = nil
+                    showsECGDetectorPopover = false
+                }
+                .disabled(detectedECGEvents.isEmpty && pendingDetectedECGEvents.isEmpty && icaReview == nil && ecgDetectionStatusMessage == nil)
+
+                Spacer()
+
+                Button("Run Detection") {
+                    detectECG(in: signal)
+                    showsECGDetectorPopover = false
+                }
+                .disabled(selectedECGMethods.isEmpty || isDetectingECG)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(16)
+        .frame(width: 280)
+    }
+
+    private func filterPopover(for signal: MFFSignalData) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Band-pass Filter")
+                .font(.headline)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Low Cutoff (Hz)")
+                    .font(.caption.weight(.semibold))
+                HStack {
+                    TextField("Low", value: $filterLowCutoff, format: .number.precision(.fractionLength(1)))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 90)
+                    Stepper("", value: $filterLowCutoff, in: 0.1...100, step: 0.1)
+                        .labelsHidden()
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("High Cutoff (Hz)")
+                    .font(.caption.weight(.semibold))
+                HStack {
+                    TextField("High", value: $filterHighCutoff, format: .number.precision(.fractionLength(1)))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 90)
+                    Stepper("", value: $filterHighCutoff, in: 0.5...200, step: 0.5)
+                        .labelsHidden()
+                }
+            }
+
+            Toggle("Apply 60 Hz IIR notch", isOn: $notch60HzEnabled)
+
+            HStack {
+                Button("Reset 0.1-30 Hz") {
+                    filterLowCutoff = 0.1
+                    filterHighCutoff = 30
+                    notch60HzEnabled = false
+                }
+
+                Spacer()
+
+                Button("Apply Filter") {
+                    applyBandpassFilter(to: signal)
+                    showsFilterPopover = false
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(16)
+        .frame(width: 300)
+    }
+
+    private func channelLabelRow(index: Int, for signal: MFFSignalData) -> some View {
+        Text(channelTitle(for: index, signal: signal))
             .font(.system(.body, design: .monospaced))
             .frame(maxWidth: .infinity, minHeight: channelRowHeight, alignment: .leading)
     }
@@ -410,6 +586,9 @@ struct WaveformWindowView: View {
         let recordingStartTime = signal.recordingStartTime
         let events = signal.events
         let sourceData = signal.data
+        let lowCutoff = filterLowCutoff
+        let highCutoff = filterHighCutoff
+        let notch60HzEnabled = notch60HzEnabled
 
         Task {
             do {
@@ -417,8 +596,9 @@ struct WaveformWindowView: View {
                     try await EEGSignalFilter.bandPass(
                         channels: sourceData,
                         samplingRate: samplingRate,
-                        lowCutoff: 0.1,
-                        highCutoff: 30
+                        lowCutoff: lowCutoff,
+                        highCutoff: highCutoff,
+                        notch60HzEnabled: notch60HzEnabled
                     )
                 }.value
 
@@ -442,6 +622,138 @@ struct WaveformWindowView: View {
 
             isFiltering = false
         }
+    }
+
+    private func clearBandpassFilter() {
+        filteredSignal = nil
+        filterStatusMessage = nil
+    }
+
+    private func detectECG(in signal: MFFSignalData) {
+        isDetectingECG = true
+        ecgDetectionStatusMessage = nil
+
+        let signalURL = signal.signalURL
+        let selectedMethods = selectedECGMethods
+
+        Task {
+            do {
+                ecgDetectionStatusMessage = "Starting ECG detection…"
+                let result = try await ECGDetect.runDetection(
+                    in: signal,
+                    methods: selectedMethods,
+                    icaPCAComponentCount: icaPCAComponentCount,
+                    statusUpdate: { message in
+                        await MainActor.run {
+                            ecgDetectionStatusMessage = message
+                        }
+                    }
+                )
+
+                guard displayedSignal?.signalURL == signalURL || waveformSession.signal?.signalURL == signalURL else {
+                    return
+                }
+
+                pendingDetectedECGEvents = result.directEvents
+
+                if let icaReview = result.icaReview {
+                    self.icaReview = icaReview
+                    selectedICAComponentIndex = icaReview.suggestedComponentIndex
+                    detectedECGEvents = []
+                } else {
+                    detectedECGEvents = result.directEvents
+                    pendingDetectedECGEvents = []
+                }
+
+                if result.directEvents.isEmpty && result.icaReview == nil {
+                    ecgDetectionStatusMessage = "No ECG peaks were detected with the selected methods."
+                } else {
+                    ecgDetectionStatusMessage = result.icaReview == nil ? "ECG detection complete." : "ICA review ready. Select a component and confirm."
+                }
+            } catch {
+                detectedECGEvents = []
+                pendingDetectedECGEvents = []
+                icaReview = nil
+                selectedICAComponentIndex = nil
+                ecgDetectionStatusMessage = error.localizedDescription
+            }
+
+            isDetectingECG = false
+        }
+    }
+
+    private func confirmICASelection() {
+        guard let icaReview, let selectedICAComponentIndex else {
+            return
+        }
+
+        let icaEvents = icaReview.components[selectedICAComponentIndex].detectedEvents
+        detectedECGEvents = (pendingDetectedECGEvents + icaEvents)
+            .sorted { $0.beginTimeSeconds < $1.beginTimeSeconds }
+        pendingDetectedECGEvents = []
+        self.icaReview = nil
+        self.selectedICAComponentIndex = nil
+        ecgDetectionStatusMessage = detectedECGEvents.isEmpty
+            ? "No ECG peaks were detected from the selected ICA component."
+            : nil
+    }
+
+    private func cancelICAReview() {
+        icaReview = nil
+        selectedICAComponentIndex = nil
+        pendingDetectedECGEvents = []
+        ecgDetectionStatusMessage = nil
+    }
+
+    @ViewBuilder
+    private func waveformRow(
+        index: Int,
+        channel: [Float],
+        plotWidth: CGFloat,
+        signal: MFFSignalData
+    ) -> some View {
+        let isSelectedICAComponent = icaReview != nil && selectedICAComponentIndex == index
+
+        WaveformPlot(
+            samples: channel,
+            amplitudeScale: amplitudeScale,
+            timeScale: timeScale,
+            sampleStride: sampleStride,
+            visibleRange: visibleHorizontalRange,
+            nominalHeight: channelRowHeight
+        )
+        .frame(width: plotWidth, height: channelRowHeight + (channelOverflowHeight * 2))
+        .background {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(nsColor: .controlBackgroundColor))
+                .frame(width: plotWidth, height: channelRowHeight)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(
+                    isSelectedICAComponent ? Color.accentColor : Color.secondary.opacity(0.15),
+                    lineWidth: isSelectedICAComponent ? 2 : 1
+                )
+                .frame(width: plotWidth, height: channelRowHeight)
+        }
+        .frame(width: plotWidth, height: channelRowHeight)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard icaReview != nil else {
+                return
+            }
+            selectedICAComponentIndex = index
+        }
+        .accessibilityLabel(channelTitle(for: index, signal: signal))
+        .zIndex(1)
+    }
+
+    private func channelTitle(for index: Int, signal: MFFSignalData) -> String {
+        if icaReview != nil || signal.signalType == "ICA" {
+            return "IC \(index + 1)"
+        }
+
+        return "Ch \(index + 1)"
     }
 
     private func jumpToEvent(_ event: MFFEvent, in signal: MFFSignalData) {

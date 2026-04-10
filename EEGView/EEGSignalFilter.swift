@@ -28,7 +28,8 @@ struct EEGSignalFilter {
         channels: [[Float]],
         samplingRate: Double,
         lowCutoff: Double,
-        highCutoff: Double
+        highCutoff: Double,
+        notch60HzEnabled: Bool = false
     ) async throws -> [[Float]] {
         guard samplingRate > 0 else {
             throw EEGSignalFilterError.invalidSamplingRate
@@ -39,23 +40,36 @@ struct EEGSignalFilter {
             throw EEGSignalFilterError.invalidBandpassRange
         }
 
-        let highPass = BiquadCoefficients.highPass(
-            cutoff: Float(lowCutoff),
-            samplingRate: Float(samplingRate),
-            q: butterworthQ
-        )
-        let lowPass = BiquadCoefficients.lowPass(
-            cutoff: Float(highCutoff),
-            samplingRate: Float(samplingRate),
-            q: butterworthQ
-        )
-
         return try await withThrowingTaskGroup(of: (Int, [Float]).self) { group in
+            let highPass = BiquadCoefficients.highPass(
+                cutoff: Float(lowCutoff),
+                samplingRate: Float(samplingRate),
+                q: butterworthQ
+            )
+            let lowPass = BiquadCoefficients.lowPass(
+                cutoff: Float(highCutoff),
+                samplingRate: Float(samplingRate),
+                q: butterworthQ
+            )
+            let notchFilter = BiquadCoefficients.notch(
+                centerFrequency: 60,
+                samplingRate: Float(samplingRate),
+                q: 30
+            )
+
             for (index, channel) in channels.enumerated() {
                 group.addTask {
                     let highPassed = zeroPhaseFilter(channel, coefficients: highPass)
                     let bandPassed = zeroPhaseFilter(highPassed, coefficients: lowPass)
-                    return (index, bandPassed)
+                    let finalSamples: [Float]
+
+                    if notch60HzEnabled, 60 < (samplingRate / 2) {
+                        finalSamples = zeroPhaseFilter(bandPassed, coefficients: notchFilter)
+                    } else {
+                        finalSamples = bandPassed
+                    }
+
+                    return (index, finalSamples)
                 }
             }
 
@@ -153,6 +167,21 @@ private struct BiquadCoefficients {
         let b0 = (1 + cosine) / 2
         let b1 = -(1 + cosine)
         let b2 = (1 + cosine) / 2
+        let a0 = 1 + alpha
+        let a1 = -2 * cosine
+        let a2 = 1 - alpha
+
+        return normalize(b0: b0, b1: b1, b2: b2, a0: a0, a1: a1, a2: a2)
+    }
+
+    nonisolated static func notch(centerFrequency: Float, samplingRate: Float, q: Float) -> Self {
+        let omega = 2 * Float.pi * centerFrequency / samplingRate
+        let cosine = cos(omega)
+        let alpha = sin(omega) / (2 * q)
+
+        let b0: Float = 1
+        let b1 = -2 * cosine
+        let b2: Float = 1
         let a0 = 1 + alpha
         let a1 = -2 * cosine
         let a2 = 1 - alpha
