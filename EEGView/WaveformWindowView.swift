@@ -37,6 +37,10 @@ struct WaveformWindowView: View {
     @State private var icaReview: ECGICAReview?
     @State private var selectedICAComponentIndex: Int?
     @State private var pendingDetectedECGEvents: [MFFEvent] = []
+    @State private var showsTopoPanel = false
+    @State private var topoSampleIndex: Int = 0
+    @State private var topoMarkerX: CGFloat?
+    @State private var verticalScrollPosition = ScrollPosition(idType: Int.self)
 
     private let sampleStride = 5
     private let channelRowHeight: CGFloat = 70
@@ -44,7 +48,8 @@ struct WaveformWindowView: View {
     private let eventTrackHeight: CGFloat = 64
     private let rowSpacing: CGFloat = 12
     private let labelColumnWidth: CGFloat = 120
-    private let eventsPanelWidth: CGFloat = 300
+    private let eventsPanelHeight: CGFloat = 200
+    private let topoPanelWidth: CGFloat = 320
 
     var body: some View {
         HStack(spacing: 0) {
@@ -80,6 +85,7 @@ struct WaveformWindowView: View {
                                 LazyVStack(alignment: .leading, spacing: rowSpacing) {
                                     ForEach(Array(signal.data.enumerated()), id: \.offset) { index, _ in
                                         channelLabelRow(index: index, for: signal)
+                                            .id(index)
                                     }
                                 }
                                 .frame(width: labelColumnWidth, alignment: .topLeading)
@@ -93,6 +99,15 @@ struct WaveformWindowView: View {
                                                 plotWidth: plotWidth,
                                                 signal: signal
                                             )
+                                        }
+                                    }
+                                    .overlay(alignment: .topLeading) {
+                                        if let markerX = topoMarkerX {
+                                            Rectangle()
+                                                .fill(Color.orange)
+                                                .frame(width: 1.5)
+                                                .offset(x: markerX)
+                                                .allowsHitTesting(false)
                                         }
                                     }
                                     .padding(.trailing, 20)
@@ -120,6 +135,7 @@ struct WaveformWindowView: View {
                             .padding(.horizontal, 20)
                             .padding(.bottom, 16)
                         }
+                        .scrollPosition($verticalScrollPosition)
 
                         Divider()
 
@@ -143,6 +159,13 @@ struct WaveformWindowView: View {
                         .background(Color(nsColor: .windowBackgroundColor))
                     }
                     .background(Color(nsColor: .textBackgroundColor))
+
+                    if showsEventsPanel {
+                        Divider()
+                        eventsPanel(for: signal)
+                            .frame(height: eventsPanelHeight)
+                            .background(Color(nsColor: .windowBackgroundColor))
+                    }
                 } else {
                     ContentUnavailableView(
                         "No Signal Loaded",
@@ -152,11 +175,13 @@ struct WaveformWindowView: View {
                 }
             }
 
-            if showsEventsPanel, let signal = displayedSignal {
+            if showsTopoPanel, let signal = displayedSignal {
                 Divider()
-                eventsPanel(for: signal)
-                    .frame(width: eventsPanelWidth)
-                    .background(Color(nsColor: .windowBackgroundColor))
+                ElectrodeMapView(signal: signal, sampleIndex: topoSampleIndex) { channelIndex in
+                    verticalScrollPosition.scrollTo(id: channelIndex, anchor: .center)
+                }
+                .frame(width: topoPanelWidth)
+                .background(Color(nsColor: .windowBackgroundColor))
             }
         }
         .navigationTitle("Waveforms")
@@ -172,6 +197,9 @@ struct WaveformWindowView: View {
             icaReview = nil
             selectedICAComponentIndex = nil
             pendingDetectedECGEvents = []
+            showsTopoPanel = false
+            topoSampleIndex = 0
+            topoMarkerX = nil
         }
     }
 
@@ -468,71 +496,55 @@ struct WaveformWindowView: View {
         let visibleEvents = filteredEvents(for: signal)
 
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Events")
-                        .font(.headline)
-                    Text("\(visibleEvents.count) of \(signal.events.count) markers")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+            HStack(spacing: 12) {
+                Text("Events")
+                    .font(.caption.weight(.semibold))
+                Text("\(visibleEvents.count) of \(signal.events.count)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
-                Spacer()
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 16)
-            .padding(.bottom, 10)
-
-            if !eventSummaries.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: 6) {
                         Button {
                             selectedEventCodes.removeAll()
                         } label: {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("All Events")
-                                    .font(.caption.weight(.semibold))
-                                Text("\(signal.events.count)")
-                                    .font(.caption2)
-                            }
-                            .foregroundStyle(selectedEventCodes.isEmpty ? Color.accentColor : .primary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 8)
-                            .background(
-                                Capsule()
-                                    .fill(selectedEventCodes.isEmpty ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.08))
-                            )
+                            Text("All")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(selectedEventCodes.isEmpty ? Color.accentColor : .primary)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(
+                                    Capsule()
+                                        .fill(selectedEventCodes.isEmpty ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.08))
+                                )
                         }
                         .buttonStyle(.plain)
 
                         ForEach(eventSummaries) { summary in
                             let isSelected = selectedEventCodes.contains(summary.code)
-
                             Button {
                                 toggleEventCode(summary.code)
                             } label: {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(summary.code)
-                                        .font(.caption.weight(.semibold))
-                                        .lineLimit(1)
-                                    Text("\(summary.count)")
-                                        .font(.caption2)
-                                }
-                                .foregroundStyle(isSelected ? Color.accentColor : .primary)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 8)
-                                .background(
-                                    Capsule()
-                                        .fill(isSelected ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.08))
-                                )
+                                Text("\(summary.code) (\(summary.count))")
+                                    .font(.caption2.weight(.semibold))
+                                    .lineLimit(1)
+                                    .foregroundStyle(isSelected ? Color.accentColor : .primary)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(
+                                        Capsule()
+                                            .fill(isSelected ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.08))
+                                    )
                             }
                             .buttonStyle(.plain)
                         }
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 12)
                 }
+
+                Spacer()
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
 
             Divider()
 
@@ -544,32 +556,41 @@ struct WaveformWindowView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(visibleEvents) { event in
-                    Button {
-                        jumpToEvent(event, in: signal)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(event.code)
-                                .font(.system(.body, design: .monospaced).weight(.semibold))
-                                .foregroundStyle(.primary)
-                            Text(formattedEventTime(event.beginTimeSeconds))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(event.sourceFile)
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 6)], spacing: 6) {
+                        ForEach(visibleEvents) { event in
+                            Button {
+                                jumpToEvent(event, in: signal)
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Text(event.code)
+                                        .font(.system(.caption, design: .monospaced).weight(.semibold))
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(1)
+                                    Text(formattedEventTime(event.beginTimeSeconds))
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    Text(trimmedSourceFile(event.sourceFile))
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                        .lineLimit(1)
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(selectedEventID == event.id
+                                              ? Color.accentColor.opacity(0.14)
+                                              : Color.secondary.opacity(0.06))
+                                )
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 4)
                     }
-                    .buttonStyle(.plain)
-                    .listRowBackground(
-                        selectedEventID == event.id
-                            ? Color.accentColor.opacity(0.14)
-                            : Color.clear
-                    )
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
                 }
-                .listStyle(.sidebar)
             }
         }
     }
@@ -738,6 +759,17 @@ struct WaveformWindowView: View {
         }
         .frame(width: plotWidth, height: channelRowHeight)
         .contentShape(Rectangle())
+        .onTapGesture(count: 2) { location in
+            let xScale = CGFloat(timeScale)
+            guard xScale > 0 else { return }
+            let plottedIndex = Int(location.x / xScale)
+            let sampleIdx = plottedIndex * sampleStride
+            let maxSample = (signal.data.first?.count ?? 1) - 1
+            let clampedIndex = max(0, min(sampleIdx, maxSample))
+            topoSampleIndex = clampedIndex
+            topoMarkerX = CGFloat(clampedIndex / sampleStride) * xScale
+            showsTopoPanel = true
+        }
         .onTapGesture {
             guard icaReview != nil else {
                 return
@@ -770,6 +802,13 @@ struct WaveformWindowView: View {
         horizontalJumpValue = maxOffset > 0 ? Double(clampedOffset / maxOffset) : 0
         isSyncingSliderFromScroll = false
         horizontalScrollPosition.scrollTo(x: clampedOffset)
+    }
+
+    private func trimmedSourceFile(_ sourceFile: String) -> String {
+        var name = sourceFile
+        if name.hasPrefix("Events_") { name = String(name.dropFirst(7)) }
+        if name.hasSuffix(".xml") { name = String(name.dropLast(4)) }
+        return name
     }
 
     private func formattedEventTime(_ seconds: Double) -> String {

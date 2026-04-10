@@ -31,6 +31,8 @@ struct EEGViewApp: App {
             WaveformWindowView()
                 .environment(waveformSession)
         }
+        .defaultLaunchBehavior(.suppressed)
+        .restorationBehavior(.disabled)
         .defaultSize(width: 1280, height: 840)
         .commands {
             CommandGroup(after: .newItem) {

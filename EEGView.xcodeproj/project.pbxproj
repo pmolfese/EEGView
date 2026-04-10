@@ -6,8 +6,13 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		C1CEEFCD2F894E8D003D3F46 /* ElectrodeMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1CEEFCC2F894E8D003D3F46 /* ElectrodeMapView.swift */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		778441692F6C8B5D006819E0 /* EEGView.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = EEGView.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C1CEEFCC2F894E8D003D3F46 /* ElectrodeMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ElectrodeMapView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -34,6 +39,7 @@
 			children = (
 				7784416B2F6C8B5D006819E0 /* EEGView */,
 				7784416A2F6C8B5D006819E0 /* Products */,
+				C1CEEFCC2F894E8D003D3F46 /* ElectrodeMapView.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -119,6 +125,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C1CEEFCD2F894E8D003D3F46 /* ElectrodeMapView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
