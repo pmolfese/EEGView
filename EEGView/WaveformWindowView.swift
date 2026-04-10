@@ -27,6 +27,7 @@ struct WaveformWindowView: View {
 
     private let sampleStride = 5
     private let channelRowHeight: CGFloat = 70
+    private let channelOverflowHeight: CGFloat = 28
     private let eventTrackHeight: CGFloat = 64
     private let rowSpacing: CGFloat = 12
     private let labelColumnWidth: CGFloat = 120
@@ -73,25 +74,31 @@ struct WaveformWindowView: View {
                                 ScrollView(.horizontal, showsIndicators: true) {
                                     LazyVStack(alignment: .leading, spacing: rowSpacing) {
                                         ForEach(Array(signal.data.enumerated()), id: \.offset) { index, channel in
-                                            WaveformPlot(
-                                                samples: channel,
-                                                amplitudeScale: amplitudeScale,
-                                                timeScale: timeScale,
-                                                sampleStride: sampleStride,
-                                                visibleRange: visibleHorizontalRange
-                                            )
-                                            .frame(width: plotWidth, height: channelRowHeight)
-                                            .background {
-                                                RoundedRectangle(cornerRadius: 8)
-                                                    .fill(Color(nsColor: .controlBackgroundColor))
-                                            }
-                                            .overlay {
-                                                RoundedRectangle(cornerRadius: 8)
-                                                    .stroke(Color.secondary.opacity(0.15), lineWidth: 1)
-                                            }
-                                            .accessibilityLabel("Channel \(index + 1)")
+                                        WaveformPlot(
+                                            samples: channel,
+                                            amplitudeScale: amplitudeScale,
+                                            timeScale: timeScale,
+                                            sampleStride: sampleStride,
+                                            visibleRange: visibleHorizontalRange,
+                                            nominalHeight: channelRowHeight
+                                        )
+                                        .frame(width: plotWidth, height: channelRowHeight + (channelOverflowHeight * 2))
+                                        .offset(y: 0)
+                                        .background {
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .fill(Color(nsColor: .controlBackgroundColor))
+                                                .frame(width: plotWidth, height: channelRowHeight)
                                         }
+                                        .overlay {
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .stroke(Color.secondary.opacity(0.15), lineWidth: 1)
+                                                .frame(width: plotWidth, height: channelRowHeight)
+                                        }
+                                        .frame(width: plotWidth, height: channelRowHeight)
+                                        .accessibilityLabel("Channel \(index + 1)")
+                                        .zIndex(1)
                                     }
+                                }
                                     .padding(.trailing, 20)
                                 }
                                 .scrollPosition($horizontalScrollPosition)
@@ -592,6 +599,7 @@ private struct WaveformPlot: View {
     let timeScale: Double
     let sampleStride: Int
     let visibleRange: ClosedRange<CGFloat>
+    let nominalHeight: CGFloat
 
     var body: some View {
         Canvas { context, size in
@@ -610,7 +618,7 @@ private struct WaveformPlot: View {
             }
 
             let midY = size.height / 2
-            let pointsPerMicrovolt = (size.height / 2) / max(amplitudeScale, 1)
+            let pointsPerMicrovolt = (nominalHeight / 2) / max(amplitudeScale, 1)
 
             var path = Path()
             let firstPlottedIndex = firstSampleIndex / sampleStride
