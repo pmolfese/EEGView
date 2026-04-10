@@ -23,11 +23,20 @@ final class WaveformSession {
         panel.allowedContentTypes = []
 
         if panel.runModal() == .OK {
-            selectedPackageURL = panel.url
-            signal = nil
-            NSApp.windows
-                .first(where: { $0.title != "Waveforms" })?
-                .makeKeyAndOrderFront(nil)
+            openPackage(at: panel.url)
         }
+    }
+
+    func openPackage(at url: URL?) {
+        guard let url else {
+            return
+        }
+
+        selectedPackageURL = url
+        signal = nil
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.windows
+            .first(where: { $0.title != "Waveforms" })?
+            .makeKeyAndOrderFront(nil)
     }
 }

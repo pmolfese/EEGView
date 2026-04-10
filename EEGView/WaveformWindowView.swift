@@ -18,129 +18,152 @@ struct WaveformWindowView: View {
     @State private var horizontalScrollPosition = ScrollPosition(idType: Int.self, x: 0)
     @State private var horizontalJumpValue: Double = 0
     @State private var isSyncingSliderFromScroll = false
+    @State private var filteredSignal: MFFSignalData?
+    @State private var isFiltering = false
+    @State private var filterStatusMessage: String?
+    @State private var showsEventsPanel = false
+    @State private var selectedEventID: MFFEvent.ID?
+    @State private var selectedEventCodes = Set<String>()
 
     private let sampleStride = 5
     private let channelRowHeight: CGFloat = 70
     private let eventTrackHeight: CGFloat = 64
     private let rowSpacing: CGFloat = 12
     private let labelColumnWidth: CGFloat = 120
+    private let eventsPanelWidth: CGFloat = 300
 
     var body: some View {
-        VStack(spacing: 0) {
-            controls
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                controls
 
-            Divider()
+                Divider()
 
-            if let signal = waveformSession.signal {
-                let plotWidth = plotWidth(for: signal)
+                if let signal = displayedSignal {
+                    let plotWidth = plotWidth(for: signal)
 
-                VStack(spacing: 0) {
-                    HStack(alignment: .top, spacing: 12) {
-                        eventLabelRow(for: signal)
-                            .frame(width: labelColumnWidth, height: eventTrackHeight, alignment: .topLeading)
-
-                        EventTrackView(
-                            events: signal.events,
-                            samplingRate: signal.samplingRate,
-                            timeScale: timeScale,
-                            sampleStride: sampleStride,
-                            visibleRange: visibleHorizontalRange,
-                            viewportWidth: horizontalViewportWidth
-                        )
-                        .frame(maxWidth: .infinity, minHeight: eventTrackHeight, maxHeight: eventTrackHeight)
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 20)
-                    .padding(.bottom, 12)
-
-                    ScrollView(.vertical) {
+                    VStack(spacing: 0) {
                         HStack(alignment: .top, spacing: 12) {
-                            LazyVStack(alignment: .leading, spacing: rowSpacing) {
-                                ForEach(Array(signal.data.enumerated()), id: \.offset) { index, _ in
-                                    channelLabelRow(index: index)
-                                }
-                            }
-                            .frame(width: labelColumnWidth, alignment: .topLeading)
+                            eventLabelRow(for: signal)
+                                .frame(width: labelColumnWidth, height: eventTrackHeight, alignment: .topLeading)
 
-                            ScrollView(.horizontal, showsIndicators: true) {
-                                LazyVStack(alignment: .leading, spacing: rowSpacing) {
-                                    ForEach(Array(signal.data.enumerated()), id: \.offset) { index, channel in
-                                        WaveformPlot(
-                                            samples: channel,
-                                            amplitudeScale: amplitudeScale,
-                                            timeScale: timeScale,
-                                            sampleStride: sampleStride,
-                                            visibleRange: visibleHorizontalRange
-                                        )
-                                        .frame(width: plotWidth, height: channelRowHeight)
-                                        .background {
-                                            RoundedRectangle(cornerRadius: 8)
-                                                .fill(Color(nsColor: .controlBackgroundColor))
-                                        }
-                                        .overlay {
-                                            RoundedRectangle(cornerRadius: 8)
-                                                .stroke(Color.secondary.opacity(0.15), lineWidth: 1)
-                                        }
-                                        .accessibilityLabel("Channel \(index + 1)")
-                                    }
-                                }
-                                .padding(.trailing, 20)
-                            }
-                            .scrollPosition($horizontalScrollPosition)
-                            .scrollIndicators(.visible, axes: .horizontal)
-                            .onScrollGeometryChange(
-                                for: HorizontalViewport.self,
-                                of: { geometry in
-                                    HorizontalViewport(
-                                        offsetX: geometry.contentOffset.x,
-                                        width: geometry.containerSize.width
-                                    )
-                                },
-                                action: { _, newValue in
-                                    horizontalOffset = max(newValue.offsetX, 0)
-                                    horizontalViewportWidth = max(newValue.width, 1)
-                                    let maxOffset = max(plotWidth - horizontalViewportWidth, 0)
-                                    isSyncingSliderFromScroll = true
-                                    horizontalJumpValue = maxOffset > 0 ? Double(horizontalOffset / maxOffset) : 0
-                                    isSyncingSliderFromScroll = false
-                                }
+                            EventTrackView(
+                                events: signal.events,
+                                samplingRate: signal.samplingRate,
+                                timeScale: timeScale,
+                                sampleStride: sampleStride,
+                                visibleRange: visibleHorizontalRange,
+                                viewportWidth: horizontalViewportWidth
                             )
+                            .frame(maxWidth: .infinity, minHeight: eventTrackHeight, maxHeight: eventTrackHeight)
                         }
                         .padding(.horizontal, 20)
-                        .padding(.bottom, 16)
-                    }
+                        .padding(.top, 20)
+                        .padding(.bottom, 12)
 
-                    Divider()
-
-                    HStack(spacing: 16) {
-                        Text("Jump")
-                            .font(.caption.weight(.semibold))
-                            .frame(width: labelColumnWidth, alignment: .leading)
-
-                        Slider(value: $horizontalJumpValue, in: 0...1)
-                            .onChange(of: horizontalJumpValue) { _, newValue in
-                                guard !isSyncingSliderFromScroll else {
-                                    return
+                        ScrollView(.vertical) {
+                            HStack(alignment: .top, spacing: 12) {
+                                LazyVStack(alignment: .leading, spacing: rowSpacing) {
+                                    ForEach(Array(signal.data.enumerated()), id: \.offset) { index, _ in
+                                        channelLabelRow(index: index)
+                                    }
                                 }
+                                .frame(width: labelColumnWidth, alignment: .topLeading)
 
-                                let maxOffset = max(plotWidth - horizontalViewportWidth, 0)
-                                horizontalScrollPosition.scrollTo(x: CGFloat(newValue) * maxOffset)
+                                ScrollView(.horizontal, showsIndicators: true) {
+                                    LazyVStack(alignment: .leading, spacing: rowSpacing) {
+                                        ForEach(Array(signal.data.enumerated()), id: \.offset) { index, channel in
+                                            WaveformPlot(
+                                                samples: channel,
+                                                amplitudeScale: amplitudeScale,
+                                                timeScale: timeScale,
+                                                sampleStride: sampleStride,
+                                                visibleRange: visibleHorizontalRange
+                                            )
+                                            .frame(width: plotWidth, height: channelRowHeight)
+                                            .background {
+                                                RoundedRectangle(cornerRadius: 8)
+                                                    .fill(Color(nsColor: .controlBackgroundColor))
+                                            }
+                                            .overlay {
+                                                RoundedRectangle(cornerRadius: 8)
+                                                    .stroke(Color.secondary.opacity(0.15), lineWidth: 1)
+                                            }
+                                            .accessibilityLabel("Channel \(index + 1)")
+                                        }
+                                    }
+                                    .padding(.trailing, 20)
+                                }
+                                .scrollPosition($horizontalScrollPosition)
+                                .scrollIndicators(.visible, axes: .horizontal)
+                                .onScrollGeometryChange(
+                                    for: HorizontalViewport.self,
+                                    of: { geometry in
+                                        HorizontalViewport(
+                                            offsetX: geometry.contentOffset.x,
+                                            width: geometry.containerSize.width
+                                        )
+                                    },
+                                    action: { _, newValue in
+                                        horizontalOffset = max(newValue.offsetX, 0)
+                                        horizontalViewportWidth = max(newValue.width, 1)
+                                        let maxOffset = max(plotWidth - horizontalViewportWidth, 0)
+                                        isSyncingSliderFromScroll = true
+                                        horizontalJumpValue = maxOffset > 0 ? Double(horizontalOffset / maxOffset) : 0
+                                        isSyncingSliderFromScroll = false
+                                    }
+                                )
                             }
+                            .padding(.horizontal, 20)
+                            .padding(.bottom, 16)
+                        }
+
+                        Divider()
+
+                        HStack(spacing: 16) {
+                            Text("Jump")
+                                .font(.caption.weight(.semibold))
+                                .frame(width: labelColumnWidth, alignment: .leading)
+
+                            Slider(value: $horizontalJumpValue, in: 0...1)
+                                .onChange(of: horizontalJumpValue) { _, newValue in
+                                    guard !isSyncingSliderFromScroll else {
+                                        return
+                                    }
+
+                                    let maxOffset = max(plotWidth - horizontalViewportWidth, 0)
+                                    horizontalScrollPosition.scrollTo(x: CGFloat(newValue) * maxOffset)
+                                }
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 12)
+                        .background(Color(nsColor: .windowBackgroundColor))
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
-                    .background(Color(nsColor: .windowBackgroundColor))
+                    .background(Color(nsColor: .textBackgroundColor))
+                } else {
+                    ContentUnavailableView(
+                        "No Signal Loaded",
+                        systemImage: "waveform",
+                        description: Text("Load a signal file from the main window to open waveforms here.")
+                    )
                 }
-                .background(Color(nsColor: .textBackgroundColor))
-            } else {
-                ContentUnavailableView(
-                    "No Signal Loaded",
-                    systemImage: "waveform",
-                    description: Text("Load a signal file from the main window to open waveforms here.")
-                )
+            }
+
+            if showsEventsPanel, let signal = displayedSignal {
+                Divider()
+                eventsPanel(for: signal)
+                    .frame(width: eventsPanelWidth)
+                    .background(Color(nsColor: .windowBackgroundColor))
             }
         }
         .navigationTitle("Waveforms")
+        .onChange(of: waveformSession.signal?.signalURL) { _, _ in
+            filteredSignal = nil
+            isFiltering = false
+            filterStatusMessage = nil
+            selectedEventID = nil
+            selectedEventCodes = []
+        }
     }
 
     private var controls: some View {
@@ -173,11 +196,51 @@ struct WaveformWindowView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+            if let signal = waveformSession.signal {
+                Button(filteredSignal == nil ? "Filter to 0.1-30Hz" : "Show Unfiltered") {
+                    if filteredSignal == nil {
+                        applyBandpassFilter(to: signal)
+                    } else {
+                        filteredSignal = nil
+                        filterStatusMessage = nil
+                    }
+                }
+                .disabled(isFiltering)
+
+                if isFiltering {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Filtering…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if filteredSignal != nil {
+                    Text("Band-pass active")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Button(showsEventsPanel ? "Hide Events" : "Show Events") {
+                    showsEventsPanel.toggle()
+                }
+                .disabled(signal.events.isEmpty)
+            }
+
+            if let filterStatusMessage {
+                Text(filterStatusMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .lineLimit(2)
+            }
+
             Spacer()
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var displayedSignal: MFFSignalData? {
+        filteredSignal ?? waveformSession.signal
     }
 
     private func eventLabelRow(for signal: MFFSignalData) -> some View {
@@ -214,6 +277,219 @@ struct WaveformWindowView: View {
         let lower = max(horizontalOffset - buffer, 0)
         let upper = horizontalOffset + horizontalViewportWidth + buffer
         return lower...upper
+    }
+
+    @ViewBuilder
+    private func eventsPanel(for signal: MFFSignalData) -> some View {
+        let eventSummaries = groupedEventSummaries(for: signal)
+        let visibleEvents = filteredEvents(for: signal)
+
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Events")
+                        .font(.headline)
+                    Text("\(visibleEvents.count) of \(signal.events.count) markers")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 10)
+
+            if !eventSummaries.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        Button {
+                            selectedEventCodes.removeAll()
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("All Events")
+                                    .font(.caption.weight(.semibold))
+                                Text("\(signal.events.count)")
+                                    .font(.caption2)
+                            }
+                            .foregroundStyle(selectedEventCodes.isEmpty ? Color.accentColor : .primary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                            .background(
+                                Capsule()
+                                    .fill(selectedEventCodes.isEmpty ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.08))
+                            )
+                        }
+                        .buttonStyle(.plain)
+
+                        ForEach(eventSummaries) { summary in
+                            let isSelected = selectedEventCodes.contains(summary.code)
+
+                            Button {
+                                toggleEventCode(summary.code)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(summary.code)
+                                        .font(.caption.weight(.semibold))
+                                        .lineLimit(1)
+                                    Text("\(summary.count)")
+                                        .font(.caption2)
+                                }
+                                .foregroundStyle(isSelected ? Color.accentColor : .primary)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 8)
+                                .background(
+                                    Capsule()
+                                        .fill(isSelected ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.08))
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
+                }
+            }
+
+            Divider()
+
+            if signal.events.isEmpty {
+                ContentUnavailableView(
+                    "No Events",
+                    systemImage: "list.bullet.rectangle",
+                    description: Text("This signal does not include any event markers.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(visibleEvents) { event in
+                    Button {
+                        jumpToEvent(event, in: signal)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(event.code)
+                                .font(.system(.body, design: .monospaced).weight(.semibold))
+                                .foregroundStyle(.primary)
+                            Text(formattedEventTime(event.beginTimeSeconds))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(event.sourceFile)
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 4)
+                    }
+                    .buttonStyle(.plain)
+                    .listRowBackground(
+                        selectedEventID == event.id
+                            ? Color.accentColor.opacity(0.14)
+                            : Color.clear
+                    )
+                }
+                .listStyle(.sidebar)
+            }
+        }
+    }
+
+    private func applyBandpassFilter(to signal: MFFSignalData) {
+        isFiltering = true
+        filterStatusMessage = nil
+
+        let signalURL = signal.signalURL
+        let signalType = signal.signalType
+        let numberOfChannels = signal.numberOfChannels
+        let samplingRate = signal.samplingRate
+        let duration = signal.duration
+        let recordingStartTime = signal.recordingStartTime
+        let events = signal.events
+        let sourceData = signal.data
+
+        Task {
+            do {
+                let filteredData = try await Task.detached(priority: .userInitiated) {
+                    try await EEGSignalFilter.bandPass(
+                        channels: sourceData,
+                        samplingRate: samplingRate,
+                        lowCutoff: 0.1,
+                        highCutoff: 30
+                    )
+                }.value
+
+                guard waveformSession.signal?.signalURL == signalURL else {
+                    return
+                }
+
+                filteredSignal = MFFSignalData(
+                    signalURL: signalURL,
+                    signalType: signalType,
+                    numberOfChannels: numberOfChannels,
+                    samplingRate: samplingRate,
+                    duration: duration,
+                    recordingStartTime: recordingStartTime,
+                    events: events,
+                    data: filteredData
+                )
+            } catch {
+                filterStatusMessage = error.localizedDescription
+            }
+
+            isFiltering = false
+        }
+    }
+
+    private func jumpToEvent(_ event: MFFEvent, in signal: MFFSignalData) {
+        selectedEventID = event.id
+
+        let plotWidth = plotWidth(for: signal)
+        let plottedIndex = event.beginTimeSeconds * signal.samplingRate / Double(sampleStride)
+        let targetX = CGFloat(plottedIndex) * CGFloat(timeScale)
+        let viewportCenter = max(horizontalViewportWidth / 2, 1)
+        let maxOffset = max(plotWidth - horizontalViewportWidth, 0)
+        let clampedOffset = min(max(targetX - viewportCenter, 0), maxOffset)
+
+        isSyncingSliderFromScroll = true
+        horizontalJumpValue = maxOffset > 0 ? Double(clampedOffset / maxOffset) : 0
+        isSyncingSliderFromScroll = false
+        horizontalScrollPosition.scrollTo(x: clampedOffset)
+    }
+
+    private func formattedEventTime(_ seconds: Double) -> String {
+        if seconds >= 60 {
+            let minutes = Int(seconds) / 60
+            let remainingSeconds = seconds.truncatingRemainder(dividingBy: 60)
+            return String(format: "%d:%06.3f", minutes, remainingSeconds)
+        }
+
+        return String(format: "%.3fs", seconds)
+    }
+
+    private func groupedEventSummaries(for signal: MFFSignalData) -> [EventSummary] {
+        Dictionary(grouping: signal.events, by: \.code)
+            .map { code, events in
+                EventSummary(code: code, count: events.count)
+            }
+            .sorted { lhs, rhs in
+                if lhs.count == rhs.count {
+                    return lhs.code.localizedStandardCompare(rhs.code) == .orderedAscending
+                }
+                return lhs.count > rhs.count
+            }
+    }
+
+    private func filteredEvents(for signal: MFFSignalData) -> [MFFEvent] {
+        guard !selectedEventCodes.isEmpty else {
+            return signal.events
+        }
+
+        return signal.events.filter { selectedEventCodes.contains($0.code) }
+    }
+
+    private func toggleEventCode(_ code: String) {
+        if selectedEventCodes.contains(code) {
+            selectedEventCodes.remove(code)
+        } else {
+            selectedEventCodes.insert(code)
+        }
     }
 }
 
@@ -372,6 +648,184 @@ private struct HorizontalViewport: Equatable {
 private struct EventMarkerStyle {
     let color: Color
     let stemTopY: CGFloat
+}
+
+private struct EventSummary: Identifiable {
+    let code: String
+    let count: Int
+
+    var id: String { code }
+}
+
+private enum EEGSignalFilterError: LocalizedError {
+    case invalidSamplingRate
+    case invalidBandpassRange
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidSamplingRate:
+            return "The signal sampling rate is invalid for filtering."
+        case .invalidBandpassRange:
+            return "The 0.1-30 Hz filter range is not valid for this signal."
+        }
+    }
+}
+
+private struct EEGSignalFilter {
+    private nonisolated static let butterworthQ: Float = 1.0 / Float(sqrt(2.0))
+
+    nonisolated static func bandPass(
+        channels: [[Float]],
+        samplingRate: Double,
+        lowCutoff: Double,
+        highCutoff: Double
+    ) async throws -> [[Float]] {
+        guard samplingRate > 0 else {
+            throw EEGSignalFilterError.invalidSamplingRate
+        }
+
+        let nyquist = samplingRate / 2
+        guard lowCutoff > 0, highCutoff > lowCutoff, highCutoff < nyquist else {
+            throw EEGSignalFilterError.invalidBandpassRange
+        }
+
+        let highPass = BiquadCoefficients.highPass(
+            cutoff: Float(lowCutoff),
+            samplingRate: Float(samplingRate),
+            q: butterworthQ
+        )
+        let lowPass = BiquadCoefficients.lowPass(
+            cutoff: Float(highCutoff),
+            samplingRate: Float(samplingRate),
+            q: butterworthQ
+        )
+
+        return try await withThrowingTaskGroup(of: (Int, [Float]).self) { group in
+            for (index, channel) in channels.enumerated() {
+                group.addTask {
+                    let highPassed = zeroPhaseFilter(channel, coefficients: highPass)
+                    let bandPassed = zeroPhaseFilter(highPassed, coefficients: lowPass)
+                    return (index, bandPassed)
+                }
+            }
+
+            var filteredChannels = Array(repeating: [Float](), count: channels.count)
+            for try await (index, filteredChannel) in group {
+                filteredChannels[index] = filteredChannel
+            }
+
+            return filteredChannels
+        }
+    }
+
+    private nonisolated static func zeroPhaseFilter(_ samples: [Float], coefficients: BiquadCoefficients) -> [Float] {
+        guard samples.count > 6 else {
+            return samples
+        }
+
+        let paddingCount = min(24, samples.count - 1)
+        let paddedSamples = reflectedPadding(for: samples, count: paddingCount)
+        let forward = applyBiquad(to: paddedSamples, coefficients: coefficients)
+        let backward = applyBiquad(to: Array(forward.reversed()), coefficients: coefficients)
+        let restored = Array(backward.reversed())
+
+        guard paddingCount > 0, restored.count > paddingCount * 2 else {
+            return restored
+        }
+
+        return Array(restored[paddingCount..<(restored.count - paddingCount)])
+    }
+
+    private nonisolated static func reflectedPadding(for samples: [Float], count: Int) -> [Float] {
+        guard count > 0, samples.count > 1 else {
+            return samples
+        }
+
+        let prefix = Array(samples[1...count].reversed())
+        let suffixStart = samples.count - count - 1
+        let suffix = Array(samples[suffixStart..<(samples.count - 1)].reversed())
+        return prefix + samples + suffix
+    }
+
+    private nonisolated static func applyBiquad(to samples: [Float], coefficients: BiquadCoefficients) -> [Float] {
+        var filtered: [Float] = []
+        filtered.reserveCapacity(samples.count)
+
+        var x1: Float = 0
+        var x2: Float = 0
+        var y1: Float = 0
+        var y2: Float = 0
+
+        for x0 in samples {
+            let y0 = coefficients.b0 * x0
+                + coefficients.b1 * x1
+                + coefficients.b2 * x2
+                - coefficients.a1 * y1
+                - coefficients.a2 * y2
+            filtered.append(y0)
+            x2 = x1
+            x1 = x0
+            y2 = y1
+            y1 = y0
+        }
+
+        return filtered
+    }
+}
+
+private struct BiquadCoefficients {
+    let b0: Float
+    let b1: Float
+    let b2: Float
+    let a1: Float
+    let a2: Float
+
+    nonisolated static func lowPass(cutoff: Float, samplingRate: Float, q: Float) -> Self {
+        let omega = 2 * Float.pi * cutoff / samplingRate
+        let cosine = cos(omega)
+        let alpha = sin(omega) / (2 * q)
+
+        let b0 = (1 - cosine) / 2
+        let b1 = 1 - cosine
+        let b2 = (1 - cosine) / 2
+        let a0 = 1 + alpha
+        let a1 = -2 * cosine
+        let a2 = 1 - alpha
+
+        return normalize(b0: b0, b1: b1, b2: b2, a0: a0, a1: a1, a2: a2)
+    }
+
+    nonisolated static func highPass(cutoff: Float, samplingRate: Float, q: Float) -> Self {
+        let omega = 2 * Float.pi * cutoff / samplingRate
+        let cosine = cos(omega)
+        let alpha = sin(omega) / (2 * q)
+
+        let b0 = (1 + cosine) / 2
+        let b1 = -(1 + cosine)
+        let b2 = (1 + cosine) / 2
+        let a0 = 1 + alpha
+        let a1 = -2 * cosine
+        let a2 = 1 - alpha
+
+        return normalize(b0: b0, b1: b1, b2: b2, a0: a0, a1: a1, a2: a2)
+    }
+
+    private nonisolated static func normalize(
+        b0: Float,
+        b1: Float,
+        b2: Float,
+        a0: Float,
+        a1: Float,
+        a2: Float
+    ) -> Self {
+        Self(
+            b0: b0 / a0,
+            b1: b1 / a0,
+            b2: b2 / a0,
+            a1: a1 / a0,
+            a2: a2 / a0
+        )
+    }
 }
 
 #Preview {

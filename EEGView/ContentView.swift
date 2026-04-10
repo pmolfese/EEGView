@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @Environment(WaveformSession.self) private var waveformSession
@@ -17,6 +18,7 @@ struct ContentView: View {
     @State private var selectedSignalFile = ""
     @State private var errorMessage: String?
     @State private var isLoadingSignal = false
+    @State private var isDropTargeted = false
 
     var body: some View {
         NavigationStack {
@@ -25,7 +27,7 @@ struct ContentView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("MFF Reader")
                             .font(.largeTitle.weight(.semibold))
-                        Text("Open an MFF package, inspect XML files first, then load signal data on demand.")
+                        Text("Open an MFF package, inspect XML files first, then load signal data on demand. You can also drag a `.mff` package into this window.")
                             .foregroundStyle(.secondary)
                     }
 
@@ -54,7 +56,10 @@ struct ContentView: View {
                 }
             }
             .padding(24)
+            .frame(minWidth: 720, minHeight: 560, alignment: .topLeading)
+            .background(dropTargetOverlay)
         }
+        .onDrop(of: [.fileURL], isTargeted: $isDropTargeted, perform: handleDrop(providers:))
         .onChange(of: waveformSession.selectedPackageURL) { _, newValue in
             guard let newValue else {
                 return
@@ -221,6 +226,56 @@ struct ContentView: View {
         }
 
         return String(format: "%d:%05.2f", minutes, seconds)
+    }
+
+    @ViewBuilder
+    private var dropTargetOverlay: some View {
+        if isDropTargeted {
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 3, dash: [10, 8]))
+                .fill(Color.accentColor.opacity(0.08))
+                .overlay {
+                    VStack(spacing: 10) {
+                        Image(systemName: "square.and.arrow.down.on.square")
+                            .font(.system(size: 30, weight: .semibold))
+                        Text("Drop an MFF package to open it")
+                            .font(.headline)
+                    }
+                    .foregroundStyle(Color.accentColor)
+                    .padding(24)
+                }
+                .padding(12)
+                .allowsHitTesting(false)
+        }
+    }
+
+    private func handleDrop(providers: [NSItemProvider]) -> Bool {
+        guard let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }) else {
+            return false
+        }
+
+        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+            let url: URL?
+
+            switch item {
+            case let data as Data:
+                url = URL(dataRepresentation: data, relativeTo: nil)
+            case let urlValue as URL:
+                url = urlValue
+            default:
+                url = nil
+            }
+
+            guard let url else {
+                return
+            }
+
+            Task { @MainActor in
+                waveformSession.openPackage(at: url)
+            }
+        }
+
+        return true
     }
 }
 

@@ -24,6 +24,8 @@ struct EEGViewApp: App {
             ContentView()
                 .environment(waveformSession)
         }
+        .defaultSize(width: 980, height: 760)
+        .windowResizability(.contentMinSize)
 
         Window("Waveforms", id: "waveforms") {
             WaveformWindowView()
